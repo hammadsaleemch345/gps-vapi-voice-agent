@@ -1,0 +1,9 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "email_from": "messages@example.com",
+    "gps_inbox": "messages@example.com",
+    "schendel_inbox": "messages@example.com",
+    "vapi_secret": ""
+  }
+}

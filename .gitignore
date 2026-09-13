@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+cdk.out/
+.venv/
+node_modules/
+*.egg-info/
+cdk.context.json
+*.pdf

@@ -1,0 +1,166 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "send_summary_email",
+        "description": "Send the structured call summary email to the correct brand inbox (GPS or Schendel). Call this at the end of every call after collecting all available information.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "caller_name": {
+              "type": "string",
+              "description": "Full name of the caller"
+            },
+            "phone": {
+              "type": "string",
+              "description": "Caller phone number"
+            },
+            "email": {
+              "type": "string",
+              "description": "Caller email address"
+            },
+            "address": {
+              "type": "string",
+              "description": "Full address (street, city, state, zip)"
+            },
+            "concern_description": {
+              "type": "string",
+              "description": "Description of the pest issue or reason for calling"
+            },
+            "concern_rating": {
+              "type": "integer",
+              "description": "Caller concern level 1 to 5 (ask for emergencies)"
+            },
+            "preferred_appointment": {
+              "type": "string",
+              "description": "Preferred day and time window (morning or afternoon)"
+            },
+            "service_reminders": {
+              "type": "string",
+              "description": "Reminder preference: text, email, both, or none"
+            },
+            "intent_tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Classification tags: NEW CUSTOMER, EXISTING CUSTOMER, COMMERCIAL, RESIDENTIAL, BILLING, RESCHEDULE, EMERGENCY, REQUESTED HUMAN, QUOTE ACCEPTED, QUOTE PRESENTED"
+            },
+            "requested_human": {
+              "type": "boolean",
+              "description": "True if the caller explicitly asked to speak with a human"
+            },
+            "summary": {
+              "type": "string",
+              "description": "Brief one sentence summary of the call"
+            },
+            "notes": {
+              "type": "string",
+              "description": "Any additional notes or edge case info"
+            }
+          },
+          "required": ["caller_name", "phone", "concern_description", "intent_tags"]
+        }
+      },
+      "server": {
+        "url": "https://eo3groq3kzr6h72wgmyclsthyu0ipzve.lambda-url.us-east-1.on.aws/"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "detect_brand",
+        "description": "Detect whether the caller issue belongs to GPS Pest or Schendel Lawn based on description keywords.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "description": "The caller's description of their issue"
+            }
+          },
+          "required": ["description"]
+        }
+      },
+      "server": {
+        "url": "https://eo3groq3kzr6h72wgmyclsthyu0ipzve.lambda-url.us-east-1.on.aws/"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_callback_message",
+        "description": "Get the time-aware callback expectation message based on current time of day.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      "server": {
+        "url": "https://eo3groq3kzr6h72wgmyclsthyu0ipzve.lambda-url.us-east-1.on.aws/"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "check_emergency",
+        "description": "Check if the caller's issue qualifies as an emergency based on description and concern rating.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "description": "The caller's description of their issue"
+            },
+            "concern_rating": {
+              "type": "integer",
+              "description": "Caller's concern level from 1 to 5"
+            }
+          },
+          "required": ["description"]
+        }
+      },
+      "server": {
+        "url": "https://eo3groq3kzr6h72wgmyclsthyu0ipzve.lambda-url.us-east-1.on.aws/"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_quote",
+        "description": "Calculate residential pest control pricing based on bathroom count, program, and cadence. Returns full pricing breakdown with payment options. Only use for residential callers — NEVER for commercial, bed bugs, termites, wildlife, or yard treatments.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "bathroom_count": {
+              "type": "string",
+              "description": "Number of bathrooms in the home, e.g. '2', '3.5', '6'"
+            },
+            "program": {
+              "type": "string",
+              "enum": ["thrive", "thrive_eco"],
+              "description": "Which program to quote. Default to 'thrive'."
+            },
+            "cadence": {
+              "type": "string",
+              "enum": ["quarterly", "monthly"],
+              "description": "Service frequency. Default to 'quarterly' for residential."
+            },
+            "one_time_pests": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["rodents", "wasps_bees", "fleas", "ants", "infestation"]
+              },
+              "description": "One-time pest treatment add-ons based on the caller's issue. $100 each."
+            }
+          },
+          "required": ["bathroom_count"]
+        }
+      },
+      "server": {
+        "url": "https://eo3groq3kzr6h72wgmyclsthyu0ipzve.lambda-url.us-east-1.on.aws/"
+      }
+    }
+  ]
+}
