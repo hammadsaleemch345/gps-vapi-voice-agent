@@ -30,6 +30,7 @@ SCHENDEL_INBOX = _parse_email_list(os.getenv("SCHENDEL_INBOX", ""), "messages@sc
 AWS_REGION_SES = os.getenv("AWS_REGION_SES", "us-east-1")
 
 VAPI_SECRET = os.getenv("VAPI_SECRET", "")
+VAPI_DASHBOARD_CALL_URL = "https://dashboard.vapi.ai/calls/{call_id}"
 
 def get_ct_offset() -> timedelta:
     """Return current CT offset accounting for DST (CDT=-5, CST=-6)."""
@@ -546,8 +547,12 @@ Service Reminder Preference: {d.get('service_reminders', 'Not provided')}
         body += f"\nNOTES\n{d['notes']}\n"
     if d.get("transcript_url"):
         body += f"\nTRANSCRIPT\n{d['transcript_url']}\n"
-    if d.get("recording_url"):
-        body += f"\nRECORDING\n{d['recording_url']}\n"
+    if d.get("recording_url") or d.get("call_id"):
+        body += "\nRECORDING\n"
+        if d.get("recording_url"):
+            body += f"{d['recording_url']}\n"
+        if d.get("call_id"):
+            body += f"View in VAPI: {VAPI_DASHBOARD_CALL_URL.format(call_id=d['call_id'])}\n"
     return body
 
 
@@ -784,12 +789,17 @@ def _extract_summary_from_messages(messages: list) -> dict:
 
 
 def _pick_recording_url(artifact: dict) -> str:
-    """Return the first populated recording URL. VAPI has changed storage backends,
-    so check every field they have used, most-public first.
+    """Return the first populated recording URL.
+
+    VAPI gated direct storage URLs in Sep 2026. Only the presigned fields open
+    without a VAPI login, and they expire at artifact['presignedUrlsExpiresAt'].
+    The rest are kept as fallbacks for older payload shapes.
     """
     recording = artifact.get("recording") if isinstance(artifact.get("recording"), dict) else {}
     mono = recording.get("mono") if isinstance(recording.get("mono"), dict) else {}
     candidates = (
+        artifact.get("presignedStereoUrl"),
+        artifact.get("presignedMonoUrl"),
         artifact.get("recordingUrl"),
         artifact.get("stereoRecordingUrl"),
         recording.get("stereoUrl"),
@@ -813,7 +823,7 @@ def handle_end_of_call_report(payload: dict) -> dict:
     transcript_text = artifact.get("transcript", "")
     recording_url = _pick_recording_url(artifact)
     transcript_url = artifact.get("transcriptUrl", "")
-    logger.info(f"Artifact keys: {list(artifact.keys())}, chosen recording_url: {recording_url[:80] if recording_url else 'EMPTY'}")
+    logger.info(f"Recording url: {recording_url[:120] if recording_url else 'EMPTY'} | presigned expires: {artifact.get('presignedUrlsExpiresAt', 'n/a')}")
 
     # PRIMARY source: the model's send_summary_email tool call args
     tool_args = _extract_summary_from_messages(messages)
@@ -856,6 +866,7 @@ def handle_end_of_call_report(payload: dict) -> dict:
             notes = (notes + " Caller disconnected before full info provided.").strip()
 
     call_data = {
+        "call_id": call_id,
         "summary": tool_args.get("summary") or analysis.get("summary") or f"Call ID: {call_id}. {concern or 'No description captured.'}",
         "caller_name": caller_name or "Unknown",
         "phone": phone,

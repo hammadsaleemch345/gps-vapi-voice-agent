@@ -121,6 +121,14 @@ class ExtractFromTranscriptRating(unittest.TestCase):
 
 class PickRecordingUrl(unittest.TestCase):
 
+    def test_presigned_stereo_beats_access_controlled_url(self):
+        artifact = {"presignedStereoUrl": "https://p", "recordingUrl": "https://r2"}
+        self.assertEqual(lf._pick_recording_url(artifact), "https://p")
+
+    def test_presigned_mono_when_no_stereo(self):
+        artifact = {"presignedMonoUrl": "https://m", "recordingUrl": "https://r2"}
+        self.assertEqual(lf._pick_recording_url(artifact), "https://m")
+
     def test_top_level_recording_url_wins(self):
         artifact = {"recordingUrl": "https://a", "recording": {"url": "https://z"}}
         self.assertEqual(lf._pick_recording_url(artifact), "https://a")
@@ -139,6 +147,21 @@ class PickRecordingUrl(unittest.TestCase):
 
     def test_no_recording_returns_empty(self):
         self.assertEqual(lf._pick_recording_url({}), "")
+
+
+class BuildEmailBodyRecording(unittest.TestCase):
+
+    def test_presigned_link_and_dashboard_link_both_present(self):
+        body = lf.build_email_body({"recording_url": "https://p", "call_id": "abc"})
+        self.assertIn("RECORDING\nhttps://p\nView in VAPI: https://dashboard.vapi.ai/calls/abc", body)
+
+    def test_dashboard_link_alone_when_no_recording_url(self):
+        body = lf.build_email_body({"call_id": "abc"})
+        self.assertIn("RECORDING\nView in VAPI: https://dashboard.vapi.ai/calls/abc", body)
+
+    def test_no_recording_section_when_neither(self):
+        body = lf.build_email_body({})
+        self.assertNotIn("RECORDING", body)
 
 
 if __name__ == "__main__":
