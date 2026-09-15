@@ -56,6 +56,9 @@ _WORD_TO_NUM = {
     "hundred": 100, "thousand": 1000,
 }
 
+_TENS = {20, 30, 40, 50, 60, 70, 80, 90}
+_MAGNITUDE_WORDS = {"hundred", "thousand"}
+
 _ORDINAL_MAP = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th",
     "fifth": "5th", "sixth": "6th", "seventh": "7th", "eighth": "8th",
@@ -146,48 +149,64 @@ def _collapse_ordinal_compound(tokens):
     return out
 
 
+def _group_compounds(run):
+    """Merge tens+unit pairs into single values so spoken groups survive:
+    ['sixty', 'four', 'thirty', 'three'] -> [64, 33]
+    ['eleven', 'oh', 'one'] -> [11, 0, 1]
+    """
+    groups = []
+    i = 0
+    while i < len(run):
+        value = _WORD_TO_NUM[run[i]]
+        has_unit_next = i + 1 < len(run) and 1 <= _WORD_TO_NUM[run[i + 1]] <= 9
+        if value in _TENS and has_unit_next:
+            value += _WORD_TO_NUM[run[i + 1]]
+            i += 2
+        else:
+            i += 1
+        groups.append(value)
+    return groups
+
+
 def _collapse_number_run(tokens):
     """Collapse consecutive number-word tokens.
-    - Value math when it's a normal count ("twenty one" -> 21, "one hundred" -> 100)
-    - Digit-concat when the run signals spoken-digit style: contains 'oh', or has a
-      teen/tween followed by single digits ("eleven oh one" -> 1101,
+    - Magnitude words present -> arithmetic ("four thousand one hundred" -> 4100)
+    - One spoken group -> its value ("twenty one" -> 21)
+    - Several groups -> concatenate, the way US house numbers, ZIPs and phones are
+      spoken ("sixty four thirty three" -> 6433, "eleven oh one" -> 1101,
       "six six six one one" -> 66611)
     """
     out = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok in _WORD_TO_NUM:
-            run = []
-            j = i
-            while j < len(tokens) and tokens[j] in _WORD_TO_NUM:
-                run.append(tokens[j])
-                j += 1
-
-            def digit_concat(words):
-                parts = []
-                for w in words:
-                    n = _WORD_TO_NUM[w]
-                    parts.append(str(n))
-                return "".join(parts)
-
-            values = [_WORD_TO_NUM[w] for w in run]
-            has_oh = "oh" in run
-            all_single_digit = all(v < 10 for v in values)
-            # Spoken-digit heuristic: any 'oh', OR the run starts with a teen/small
-            # number followed only by 0-9 tokens (e.g. "eleven oh one", "twelve oh five")
-            spoken_digits = has_oh or (
-                len(run) >= 2 and values[0] < 20 and all(v < 10 for v in values[1:])
-            )
-            if spoken_digits or (all_single_digit and len(run) > 1):
-                out.append(digit_concat(run))
-            else:
-                v = _words_to_int(run)
-                out.append(str(v) if v is not None else " ".join(run))
-            i = j
-        else:
+        if tok not in _WORD_TO_NUM:
             out.append(tok)
             i += 1
+            continue
+
+        run = []
+        j = i
+        while j < len(tokens) and tokens[j] in _WORD_TO_NUM:
+            run.append(tokens[j])
+            j += 1
+
+        if any(w in _MAGNITUDE_WORDS for w in run):
+            value = _words_to_int(run)
+            out.append(str(value) if value is not None else " ".join(run))
+        else:
+            groups = _group_compounds(run)
+            out.append("".join(str(g) for g in groups))
+        i = j
+    return out
+
+
+def _abbreviate_states(tokens):
+    """Abbreviate a state name unless it is part of a city name ("Kansas City")."""
+    out = []
+    for i, tok in enumerate(tokens):
+        next_is_city = i + 1 < len(tokens) and tokens[i + 1] == "city"
+        out.append(tok if next_is_city else _STATE_MAP.get(tok, tok))
     return out
 
 
@@ -205,7 +224,7 @@ def normalize_numbers(text: str, field: str) -> str:
         # before tokenization can split it.
         working = text
         for phrase, abbr in _MULTI_WORD_STATES.items():
-            working = re.sub(rf"\b{phrase}\b", abbr, working, flags=re.IGNORECASE)
+            working = re.sub(rf"\b{phrase}\b(?!\s+city\b)", abbr, working, flags=re.IGNORECASE)
         text = working
         # Tokenize while preserving simple punctuation. Keep alphanumeric tokens
         # like "40th" and "12A" as single tokens so we don't split off suffixes.
@@ -223,7 +242,7 @@ def normalize_numbers(text: str, field: str) -> str:
         # Directions, street types, and single-word states
         tokens = [_DIRECTION_MAP.get(t, t) for t in tokens]
         tokens = [_STREET_TYPE_MAP.get(t, t) for t in tokens]
-        tokens = [_STATE_MAP.get(t, t) for t in tokens]
+        tokens = _abbreviate_states(tokens)
 
         # Rebuild string — capitalize first letter of each non-abbreviation word
         rebuilt = []
@@ -663,7 +682,8 @@ def _extract_from_transcript(transcript: str) -> dict:
                 result["concern_description"] = text
                 break
 
-    # Name
+    # Name — prefer the answer to a direct ask, fall back to a volunteered
+    # "my name is X" anywhere in the caller's lines
     name_ans = find_answer(["first", "last", "name"])
     if name_ans:
         m = re.search(r"(?:name is|it's|i am|i'm)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", name_ans)
@@ -673,6 +693,14 @@ def _extract_from_transcript(transcript: str) -> dict:
             words = [w for w in name_ans.split() if w[:1].isalpha()]
             if words:
                 result["caller_name"] = " ".join(words[-2:]) if len(words) >= 2 else words[-1]
+    if not result.get("caller_name"):
+        for line in lines:
+            if not line.lower().startswith("user:"):
+                continue
+            m = re.search(r"\b(?i:my name is|this is|i am|i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", line[5:].strip())
+            if m:
+                result["caller_name"] = m.group(1)
+                break
 
     # Email
     email_ans = find_answer(["email"])
@@ -755,6 +783,22 @@ def _extract_summary_from_messages(messages: list) -> dict:
     return {}
 
 
+def _pick_recording_url(artifact: dict) -> str:
+    """Return the first populated recording URL. VAPI has changed storage backends,
+    so check every field they have used, most-public first.
+    """
+    recording = artifact.get("recording") if isinstance(artifact.get("recording"), dict) else {}
+    mono = recording.get("mono") if isinstance(recording.get("mono"), dict) else {}
+    candidates = (
+        artifact.get("recordingUrl"),
+        artifact.get("stereoRecordingUrl"),
+        recording.get("stereoUrl"),
+        mono.get("combinedUrl"),
+        recording.get("url"),
+    )
+    return next((url for url in candidates if url), "")
+
+
 def handle_end_of_call_report(payload: dict) -> dict:
     message = payload.get("message", {})
     call = message.get("call", {})
@@ -766,19 +810,10 @@ def handle_end_of_call_report(payload: dict) -> dict:
     ended_reason = message.get("endedReason", "unknown")
     logger.info(f"End of call — ID: {call_id}, Reason: {ended_reason}")
 
-    # Extract transcript/recording
     transcript_text = artifact.get("transcript", "")
-    # VAPI moved to HIPAA-compliant storage. Try every known URL field in priority
-    # order so we don't hand out a broken/expired Cloudflare R2 direct link.
-    recording = artifact.get("recording", {}) if isinstance(artifact.get("recording"), dict) else {}
-    recording_url = (
-        artifact.get("recordingUrl")
-        or artifact.get("stereoRecordingUrl")
-        or recording.get("stereoUrl")
-        or recording.get("mono", {}).get("combinedUrl") if isinstance(recording.get("mono"), dict) else ""
-    ) or recording.get("url") or ""
+    recording_url = _pick_recording_url(artifact)
     transcript_url = artifact.get("transcriptUrl", "")
-    logger.info(f"Artifact keys: {list(artifact.keys())}, recording keys: {list(recording.keys()) if recording else 'none'}, chosen recording_url: {recording_url[:80] if recording_url else 'EMPTY'}")
+    logger.info(f"Artifact keys: {list(artifact.keys())}, chosen recording_url: {recording_url[:80] if recording_url else 'EMPTY'}")
 
     # PRIMARY source: the model's send_summary_email tool call args
     tool_args = _extract_summary_from_messages(messages)
